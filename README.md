@@ -22,21 +22,27 @@ Deep RL agents can outperform hand-crafted controllers at complex driving tasks,
 ## Project Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Pipeline Overview                        │
-│                                                                 │
-│  highway-v0 ──► PPO Training ──► Rollout Collection            │
-│  (gymnasium)    (SB3, 30K steps)  (20 episodes, 777 steps)     │
-│                                         │                       │
-│                                         ▼                       │
-│                              Decision Tree Distillation         │
-│                              (scikit-learn, max_depth=4)        │
-│                                         │                       │
-│                          ┌──────────────┼──────────────┐        │
-│                          ▼              ▼              ▼        │
-│                     Text Rules    Tree Diagram   Feature        │
-│                    (export_text)  (plot_tree)   Importance      │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Full Research Pipeline                          │
+│                                                                        │
+│  highway-v0 ──► PPO Training ──► Rollout Collection (40 episodes)     │
+│  (gymnasium)    (SB3, 30K steps)        │                              │
+│                                ┌────────┴────────┐                    │
+│                                ▼                 ▼                    │
+│                           Train split        Test split               │
+│                           (80%)              (20%, held-out)          │
+│                                │                 │                    │
+│                                ▼                 │                    │
+│                       Decision Tree Fit          │                    │
+│                       (max_depth ∈ {1…8})        │                    │
+│                                └────────┬────────┘                    │
+│                                         ▼                              │
+│                          ┌──────────────┼──────────────┐              │
+│                          ▼              ▼              ▼              │
+│                     Depth Sweep    ego_y          Driving             │
+│                     (fidelity vs   Ablation       Metrics +           │
+│                      complexity)   (causal XAI)   Dist. Shift        │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Observation Space — Kinematics (5 × 5 = 25 features)
@@ -67,24 +73,67 @@ All positions and velocities are expressed **relative to the ego vehicle** and *
 
 ## Results
 
+### Phase 1 — Baseline
+
 | Metric | Value |
 |--------|-------|
 | PPO Training Timesteps | 30,000 |
 | Mean Evaluation Reward (10 eps) | **26.38 ± 8.09** |
-| Rollout Transitions Collected | 777 (20 episodes) |
 | Decision Tree Depth | 4 |
 | Decision Tree Leaves | 8 |
-| **Fidelity to PPO Policy** | **99.23%** |
+| Fidelity (same-data, Phase 1) | 99.23% |
+
+### Phase 2 — Research Experiments
+
+**Experiment 1: Honest train/test fidelity**
+
+| Split | Fidelity |
+|-------|---------|
+| Training (80%) | *run to see* |
+| **Test (20%, held-out)** | **← the number that matters** |
+
+**Experiment 2: Depth vs. fidelity sweep**
+
+Trains surrogate trees at `max_depth` ∈ {1, 2, 3, 4, 5, 6, 8} and plots
+both train and test fidelity. Answers: *how many rules does the surrogate need?*
+
+**Experiment 3: `ego_y` feature ablation (causal XAI)**
+
+| Condition | Test Fidelity |
+|-----------|--------------|
+| All 25 features (baseline) | — |
+| Without `ego_y` | — |
+| `ego_y` alone (1 feature) | — |
+
+Tests whether the 97.6% Gini importance of `ego_y` reflects a causal
+driving strategy or a correlational tree artefact.
+
+**Experiment 4: Driving behaviour metrics (30 episodes)**
+
+Collision rate, success rate, mean speed, episode length, and lane changes —
+characterising *how* the PPO agent drives, not just its reward.
+
+**Experiment 5: Generalisation under distribution shift**
+
+Evaluates the pre-trained surrogate on:
+- Sparse traffic (10 vehicles)
+- Training density (20 vehicles) — reference
+- Dense traffic (30 vehicles)
+
+Addresses the key limitation: *does the explanation hold outside the states used to construct it?*
 
 ### Key XAI Finding — Feature Importance
 
-The surrogate Decision Tree identified **`ego_y` (lateral lane position)** as overwhelmingly the most influential feature (97.6% of total Gini reduction), confirming that the PPO agent's decisions are dominated by its current lane position — a semantically meaningful and behaviourally valid insight.
+The surrogate Decision Tree identified **`ego_y` (lateral lane position)**
+as overwhelmingly the most influential feature (97.6% of total Gini reduction).
+The ablation study confirms whether this reflects a genuinely *lane-centric*
+driving strategy or a correlational artefact.
 
 | Rank | Feature | Importance |
 |------|---------|-----------|
 | 1 | `ego_y` (ego lateral position) | 0.9760 |
 | 2 | `v2_vx` (2nd vehicle relative speed) | 0.0143 |
-| 3 | `v1_y` (nearest vehicle lateral position) | 0.0055 |
+| 3 | `v1_y` (nearest vehicle lateral pos.) | 0.0055 |
 | 4 | `v3_vx` | 0.0021 |
 | 5 | `v4_vx` | 0.0011 |
 
@@ -160,12 +209,19 @@ After training, the PPO agent is rolled out for 20 episodes. Each `(observation,
 
 ## Outputs
 
-Running the full script produces:
+Running the full script (Cells 1–18) produces:
 
+**Phase 1:**
 - **`ppo_highway_agent.zip`** — Saved PPO weights (reload with `PPO.load()`)
 - **`ppo_highway_agent.mp4`** — Video of the trained agent navigating traffic
 - **`decision_tree_policy.png`** — Visual decision tree coloured by action class
 - **`feature_importance.png`** — Gini-reduction feature importance bar chart
+
+**Phase 2:**
+- **`depth_fidelity_tradeoff.png`** — Fidelity vs. tree complexity curve
+- **`ego_y_ablation.png`** — Ablation bar chart (baseline / no-ego_y / ego_y-only)
+- **`driving_behaviour_metrics.png`** — Distributions of speed, length, lane changes
+- **`generalisation_distribution_shift.png`** — Fidelity across 3 traffic densities
 
 ---
 
