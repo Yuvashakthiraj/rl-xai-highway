@@ -40,8 +40,8 @@ Deep RL agents can outperform hand-crafted controllers at complex driving tasks,
 │                          ┌──────────────┼──────────────┐              │
 │                          ▼              ▼              ▼              │
 │                     Depth Sweep    ego_y          Driving             │
-│                     (fidelity vs   Ablation       Metrics +           │
-│                      complexity)   (causal XAI)   Dist. Shift        │
+│                     (fidelity vs   Feature        Metrics +           │
+│                      complexity)   Ablation       Dist. Shift        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -83,6 +83,8 @@ All positions and velocities are expressed **relative to the ego vehicle** and *
 | Decision Tree Leaves | 8 |
 | Fidelity (same-data, Phase 1) | 99.23% |
 
+> **Note:** The Phase 1 tree was fitted on a 20-episode rollout (~1,572 transitions) and measured on the **same** data used for training (in-sample). Phase 2 uses a separate 40-episode rollout split 80/20 — a different dataset — which produces a slightly different tree structure (12 leaves at depth 4 instead of 8). The Phase 2 train fidelity (98.81%) is therefore not directly comparable to the Phase 1 figure (99.23%); both are correct for their respective datasets.
+
 ### Phase 2 — Research Experiments
 
 **Experiment 1: Honest train/test fidelity**
@@ -107,7 +109,7 @@ All positions and velocities are expressed **relative to the ego vehicle** and *
 
 > **Key insight:** Depth 2 (4 leaves = 4 rules) achieves identical test fidelity (97.78%) to depth 4, 5, and 6. The PPO policy on this task is representable by **4 decision rules**. Adding complexity beyond depth 2 yields no measurable improvement.
 
-**Experiment 3: `ego_y` feature ablation (causal XAI)**
+**Experiment 3: `ego_y` feature ablation**
 
 | Condition | Features | Test Fidelity | Change |
 |-----------|---------|--------------|--------|
@@ -157,7 +159,7 @@ The Phase 1 analysis identified `ego_y` as overwhelmingly dominant (97.6% Gini i
 
 ```
 rl-xai-highway/
-├── rl_xai_highway.py        # Main script — all 12 Colab cells
+├── rl_xai_highway.py        # Main script — all 18 Colab cells (Phase 1: 1–12, Phase 2: 13–18)
 ├── requirements.txt         # Python dependencies
 ├── .gitignore
 ├── LICENSE
@@ -215,9 +217,11 @@ where $r_t(\theta) = \pi_\theta(a_t|s_t) / \pi_{\theta_\text{old}}(a_t|s_t)$ and
 
 ### 2. XAI — Policy Distillation
 
-After training, the PPO agent is rolled out for 20 episodes. Each `(observation, action)` pair is collected into a supervised dataset. A `DecisionTreeClassifier(max_depth=4)` is then fitted on this dataset — a **surrogate model** (also called a student or mimic model) that approximates the neural policy with human-readable if-else logic.
+After training, the PPO agent is rolled out for **20 episodes (Phase 1)**. Each `(observation, action)` pair is collected into a supervised dataset. A `DecisionTreeClassifier(max_depth=4)` is then fitted on this dataset — a **surrogate model** (also called a student or mimic model) that approximates the neural policy with human-readable if-else logic.
 
-**Fidelity** measures the fraction of timesteps where the tree's predicted action matches the PPO agent's action. At 99.23%, the depth-4 tree almost perfectly captures the PPO decision surface over the observed state distribution.
+**Phase 2** extends this to **40 rollout episodes**, split 80/20 into training and held-out test sets, enabling an honest out-of-sample fidelity measurement (see Experiment 1).
+
+**Fidelity** measures the fraction of timesteps where the tree's predicted action matches the PPO agent's action. At 99.23%, the Phase 1 depth-4 tree almost perfectly captures the PPO decision surface over the observed state distribution (measured on the same data used for training). The honest out-of-sample test fidelity in Phase 2 is **97.78%**.
 
 ---
 
@@ -242,7 +246,7 @@ Running the full script (Cells 1–18) produces:
 ## Limitations and Future Work
 
 - **Distribution shift:** The Decision Tree is only faithful on states the PPO agent actually visited. Out-of-distribution states may be misrepresented.
-- **Depth trade-off:** `max_depth=4` prioritises interpretability over completeness. A deeper tree would improve fidelity but reduce readability.
+- **Depth trade-off:** The depth sweep (Experiment 2) shows that `max_depth=2` is the optimal point — it achieves the same test fidelity (97.78%) as deeper trees while using only 4 rules. The Phase 1 baseline used `max_depth=4`; this was revised in Phase 2.
 - **Global vs. local explanations:** Future work could apply LIME or SHAP for per-decision local explanations rather than a single global surrogate.
 - **Richer environments:** Extending to `intersection-v0` or `roundabout-v0` would test whether the XAI findings generalise across traffic topologies.
 - **Reward shaping:** Incorporating collision-avoidance rewards and comfort penalties would make the agent — and its explanation — more realistic.
